@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --accent: #a855f7;
+  --bg-dark: #020617;
+  --panel-bg: rgba(15, 23, 42, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.08);
+}
+
+body {
+  @apply bg-slate-950 text-slate-50 antialiased selection:bg-indigo-500/30;
+}
+
+.glass-panel {
+  @apply bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-2xl shadow-2xl;
+}
+
+.glass-card {
+  @apply bg-white/5 backdrop-blur-md border border-white/5 rounded-xl transition-all duration-300 hover:bg-white/10;
+}
+
+.btn-primary {
+  @apply flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-medium transition-all active:scale-95 shadow-lg shadow-indigo-600/20;
+}
+
+.btn-secondary {
+  @apply flex items-center justify-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-medium transition-all active:scale-95;
+}
+
+.input-field {
+  @apply w-full px-4 py-2.5 bg-slate-900/50 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20 transition-all;
+}
+
+/* Animation for loading states */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
