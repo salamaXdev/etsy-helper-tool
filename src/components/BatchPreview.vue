@@ -1,10 +1,33 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useMockupStore } from '../stores/mockupStore'
 import { Download, CheckCircle2, AlertCircle, Loader2, Layers } from 'lucide-vue-next'
 
 const store = useMockupStore()
 const isExporting = ref(false)
+const exportBaseName = ref('')
+
+// Default the name from the design source or active listing
+watch(() => [store.designSrc, store.activeListing], () => {
+  if (exportBaseName.value) return // don't overwrite user edits
+  if (store.activeListing) {
+    exportBaseName.value = store.activeListing.id
+  } else if (store.designSrc) {
+    // Extract filename from data URL or path
+    const src = store.designSrc
+    if (src.startsWith('data:')) {
+      exportBaseName.value = 'design'
+    } else {
+      const name = src.split('/').pop()?.replace(/\.[^.]+$/, '') || 'design'
+      exportBaseName.value = name
+    }
+  }
+}, { immediate: true })
+
+const getMockupExportName = (index: number) => {
+  const base = exportBaseName.value.trim() || 'mockup'
+  return `${base} ${index + 1}`
+}
 
 const INTERNAL_SIZE = 2000
 
@@ -42,39 +65,87 @@ const renderComposite = async (mockup: any, size: number): Promise<string | null
   ctx.drawImage(designImg, 0, 0, b.width * scale, b.height * scale)
   ctx.restore()
 
-  return canvas.toDataURL('image/png')
+  // Draw text overlays
+  const texts = store.textOverlays[mockup.id] || []
+  for (const t of texts) {
+    ctx.save()
+    const fontParts = []
+    if (t.italic) fontParts.push('italic')
+    if (t.bold) fontParts.push('bold')
+    fontParts.push(`${t.fontSize * scale}px`)
+    fontParts.push(t.fontFamily)
+    ctx.font = fontParts.join(' ')
+    ctx.textBaseline = 'top'
+    if (t.highlight) {
+      ctx.fillStyle = t.highlight
+      const metrics = ctx.measureText(t.text)
+      const pad = 2 * scale
+      ctx.fillRect(
+        t.x * scale - pad, t.y * scale - pad,
+        metrics.width + pad * 2, t.fontSize * scale * 1.2 + pad * 2
+      )
+    }
+    ctx.fillStyle = t.color
+    ctx.fillText(t.text, t.x * scale, t.y * scale)
+    ctx.restore()
+  }
+
+  // Draw image overlays
+  const images = store.imageOverlays[mockup.id] || []
+  for (const img of images) {
+    const overlayImg = new Image()
+    overlayImg.crossOrigin = 'anonymous'
+    overlayImg.src = img.src
+    await new Promise<void>((r) => { overlayImg.onload = () => r(); overlayImg.onerror = () => r() })
+    ctx.drawImage(overlayImg, img.x * scale, img.y * scale, img.width * scale, img.height * scale)
+  }
+
+  return canvas.toDataURL('image/jpeg', 0.92)
 }
 
-const exportToEtsy = async () => {
-  if (!store.activeListing) return
+const dataUrlToBlob = (dataUrl: string): Blob => {
+  const parts = dataUrl.split(',')
+  const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg'
+  const bytes = atob(parts[1])
+  const arr = new Uint8Array(bytes.length)
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
+  return new Blob([arr], { type: mime })
+}
+
+const exportMockups = async () => {
+  // Check browser support
+  if (!(window as any).showDirectoryPicker) {
+    alert('Your browser does not support folder picker. Please use Chrome or Edge.')
+    return
+  }
+
+  let dirHandle: any
+  try {
+    dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' })
+  } catch (e: any) {
+    if (e.name !== 'AbortError') console.error('Folder picker error:', e)
+    return
+  }
 
   isExporting.value = true
   try {
-    const images: { name: string; data: string }[] = []
-
-    for (const mockup of store.exportMockups) {
+    let count = 0
+    for (let i = 0; i < store.exportMockups.length; i++) {
+      const mockup = store.exportMockups[i]
       const dataUrl = await renderComposite(mockup, INTERNAL_SIZE)
-      if (dataUrl) {
-        images.push({ name: `Artboard_${mockup.name}`, data: dataUrl })
-      }
-    }
+      if (!dataUrl) continue
 
-    const response = await fetch('/api/save-listing', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: store.activeListing.version,
-        id: store.activeListing.id,
-        images
-      })
-    })
-
-    if (response.ok) {
-      alert(`Successfully exported ${images.length} mockups to ${store.activeListing.version}/listing/`)
+      const fileName = getMockupExportName(i).replace(/[\/\\:*?"<>|]/g, '_') + '.jpg'
+      const fileHandle = await dirHandle.getFileHandle(fileName, { create: true })
+      const writable = await fileHandle.createWritable()
+      await writable.write(dataUrlToBlob(dataUrl))
+      await writable.close()
+      count++
     }
+    alert(`Successfully exported ${count} mockups!`)
   } catch (e) {
-    console.error(e)
-    alert('Export failed. Make sure the local server is configured.')
+    console.error('Export error:', e)
+    alert('Export failed: ' + (e as Error).message)
   } finally {
     isExporting.value = false
   }
@@ -93,15 +164,22 @@ const exportToEtsy = async () => {
       </div>
 
       <div v-if="store.exportMockups.length > 0 && store.designSrc" class="flex items-center gap-4">
+        <div class="flex flex-col items-end gap-1">
+          <label class="text-[10px] text-slate-500 uppercase font-bold tracking-wide">Export Name</label>
+          <input
+            v-model="exportBaseName"
+            placeholder="design name"
+            class="bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white w-52 focus:outline-none focus:border-indigo-500/50 text-right"
+          />
+        </div>
         <button
-          v-if="store.activeListing"
-          @click="exportToEtsy"
+          @click="exportMockups"
           :disabled="isExporting"
           class="flex items-center gap-2 px-6 py-3 bg-emerald-600 rounded-2xl font-bold shadow-xl shadow-emerald-600/20 hover:scale-105 transition-all text-sm disabled:opacity-50"
         >
           <Download v-if="!isExporting" class="w-4 h-4" />
           <Loader2 v-else class="w-4 h-4 animate-spin" />
-          {{ isExporting ? 'Saving to Folder...' : `Export ${store.exportMockups.length} Mockups` }}
+          {{ isExporting ? 'Saving...' : `Export ${store.exportMockups.length} Mockups` }}
         </button>
       </div>
     </div>
@@ -114,11 +192,11 @@ const exportToEtsy = async () => {
 
     <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       <div
-        v-for="mockup in store.exportMockups"
+        v-for="(mockup, idx) in store.exportMockups"
         :key="mockup.id"
         class="glass-panel group overflow-hidden flex flex-col"
       >
-        <div class="aspect-square bg-slate-900 relative overflow-hidden">
+        <div class="aspect-square bg-slate-900 relative overflow-hidden" style="container-type: inline-size">
           <img :src="mockup.src" class="w-full h-full object-contain" />
 
           <div v-if="mockup.boundary && store.designSrc"
@@ -137,6 +215,33 @@ const exportToEtsy = async () => {
             </div>
           </div>
 
+          <!-- Text overlays preview -->
+          <div v-for="t in (store.textOverlays[mockup.id] || [])" :key="t.id"
+               class="absolute pointer-events-none"
+               :style="{
+                 left: (t.x / INTERNAL_SIZE * 100) + '%',
+                 top: (t.y / INTERNAL_SIZE * 100) + '%',
+                 fontSize: (t.fontSize / INTERNAL_SIZE * 100) + 'cqw',
+                 fontFamily: t.fontFamily,
+                 fontWeight: t.bold ? 'bold' : 'normal',
+                 fontStyle: t.italic ? 'italic' : 'normal',
+                 color: t.color,
+                 backgroundColor: t.highlight || 'transparent',
+                 whiteSpace: 'nowrap',
+                 lineHeight: '1.2',
+               }">{{ t.text }}</div>
+
+          <!-- Image overlays preview -->
+          <img v-for="img in (store.imageOverlays[mockup.id] || [])" :key="img.id"
+               :src="img.src"
+               class="absolute pointer-events-none object-contain"
+               :style="{
+                 left: (img.x / INTERNAL_SIZE * 100) + '%',
+                 top: (img.y / INTERNAL_SIZE * 100) + '%',
+                 width: (img.width / INTERNAL_SIZE * 100) + '%',
+                 height: (img.height / INTERNAL_SIZE * 100) + '%',
+               }" />
+
           <div v-if="!mockup.boundary" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center">
             <AlertCircle class="w-8 h-8 text-amber-500 mb-2" />
             <p class="text-xs font-bold text-slate-300">NO BOUNDARIES SET</p>
@@ -145,7 +250,7 @@ const exportToEtsy = async () => {
         </div>
 
         <div class="p-3 flex items-center justify-between border-t border-white/5">
-          <span class="text-xs font-medium text-slate-400 truncate">{{ mockup.name }}</span>
+          <span class="text-xs font-medium text-slate-400 truncate">{{ getMockupExportName(idx) }}.jpg</span>
           <div class="flex items-center gap-2">
             <!-- Per-mockup multiply toggle -->
             <button

@@ -1,12 +1,29 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useMockupStore } from '../stores/mockupStore'
-import { Plus, Upload, Trash2, Image as ImageIcon, Sparkles, Check } from 'lucide-vue-next'
+import { Plus, Upload, Trash2, Image as ImageIcon, Sparkles, Check, Calendar } from 'lucide-vue-next'
 
 const props = defineProps<{ activeTab: string }>()
 const store = useMockupStore()
 const isDraggingDesign = ref(false)
 const isDraggingMockup = ref(false)
+
+// Event management
+const showCreateEvent = ref(false)
+const newEventName = ref('')
+
+const openCreateEvent = () => {
+  newEventName.value = ''
+  showCreateEvent.value = true
+}
+
+const createEvent = () => {
+  if (!newEventName.value.trim()) return
+  const id = store.createEvent(newEventName.value.trim())
+  store.selectEvent(id)
+  newEventName.value = ''
+  showCreateEvent.value = false
+}
 
 const processMockupFiles = (files: FileList) => {
   for (const file of files) {
@@ -14,6 +31,7 @@ const processMockupFiles = (files: FileList) => {
     reader.onload = (event) => {
       if (event.target?.result) {
         store.addMockup(event.target.result as string, file.name)
+        store.saveMockupsToStorage()
       }
     }
     reader.readAsDataURL(file)
@@ -56,7 +74,50 @@ const handleDesignDrop = (e: DragEvent) => {
 <template>
   <aside class="w-80 h-full border-r border-white/5 flex flex-col bg-slate-950/80 backdrop-blur-3xl z-30">
     <div class="p-6 flex flex-col gap-6 overflow-y-auto custom-scrollbar">
-      
+
+      <!-- Event Selector -->
+      <section>
+        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+          <Calendar class="w-3 h-3" /> Event
+        </h3>
+        <div class="flex items-center gap-2">
+          <select
+            :value="store.activeEventId || ''"
+            @change="store.selectEvent(($event.target as HTMLSelectElement).value)"
+            class="flex-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer"
+          >
+            <option value="" disabled class="bg-slate-800 text-slate-500">Select event...</option>
+            <option v-for="event in store.events" :key="event.id" :value="event.id" class="bg-slate-800">
+              {{ event.name }}
+            </option>
+          </select>
+          <button @click="openCreateEvent" class="p-2 hover:bg-white/5 rounded-lg transition-colors text-indigo-400" title="New event">
+            <Plus class="w-4 h-4" />
+          </button>
+          <button
+            v-if="store.activeEventId"
+            @click="store.deleteEvent(store.activeEventId!)"
+            class="p-2 hover:bg-red-500/10 hover:text-red-400 rounded-lg transition-colors text-slate-600"
+            title="Delete event"
+          >
+            <Trash2 class="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <!-- Create Event Form -->
+        <div v-if="showCreateEvent" class="mt-3 p-3 rounded-xl bg-slate-900/60 border border-white/5 space-y-2.5">
+          <input
+            v-model="newEventName"
+            placeholder="Event name"
+            class="w-full bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500/50"
+          />
+          <div class="flex gap-2">
+            <button @click="createEvent" class="flex-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-lg transition-colors">Create</button>
+            <button @click="showCreateEvent = false" class="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-400 text-[10px] font-bold rounded-lg transition-colors">Cancel</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Design Upload -->
       <section>
         <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
